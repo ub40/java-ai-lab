@@ -38,4 +38,130 @@ Platform thread vs. virtual thread
 Kijk of je de extra worker threads kan starten met:
  -Djdk.virtualThreadScheduler.parallelism=2                                                                                                                                                              
 Zet dit in IntelliJ bij Run → Edit Configurations → VM options, herstart, en kijk of je alleen nog worker-1 en worker-2 ziet. Dat is meteen een leuk extra experiment voor je README.                   
- 
+
+
+## Stap 4: Blokkerend endpoint `/api/thread/slow`
+
+**Doel:** een trage I/O-call (database, externe API) nabootsen met `Thread.sleep(ms)`, en zien wat er met de carrier thread gebeurt tijdens het wachten.
+
+**Endpoint:** `GET /api/thread/slow?ms=1000` (standaard 1000 ms)
+
+Het endpoint leest `Thread.currentThread().toString()` uit **vóór** en **na** de `sleep` en geeft beide terug (`before` / `after`), samen met de gewone thread-info.
+
+### Resultaat (één request)
+
+```bash
+curl "http://localhost:8080/api/thread/slow?ms=2000"
+```
+
+```json
+{
+  "thread": {
+    "id": 69,
+    "name": "tomcat-handler-0",
+    "virtual": true,
+    "state": "RUNNABLE",
+    "description": "VirtualThread[#69,tomcat-handler-0]/runnable@ForkJoinPool-1-worker-1"
+  },
+  "before": "VirtualThread[#69,tomcat-handler-0]/runnable@ForkJoinPool-1-worker-1",
+  "after": "VirtualThread[#69,tomcat-handler-0]/runnable@ForkJoinPool-1-worker-1",
+  "ms": 2000
+}
+```
+
+### Uitleg
+
+- `before` en `after` staan allebei op `worker-1`. Dat betekent **niet** dat de virtual thread niet is afgestapt (unmount). Tijdens de `sleep` was `worker-1` vrij.
+- Er was maar **één request**: alle 10 carriers waren vrij, dus de JVM zette de virtual thread na het wachten weer op `worker-1`.
+- Om een carrier-wissel te zien heb je **drukte** nodig, dus veel requests tegelijk:
+
+```bash
+for i in {1..30}; do curl -s -w "\n" "http://localhost:8080/api/thread/slow?ms=500" & done; wait
+```
+
+> TODO: regel toevoegen waarin `before` en `after` op een andere `worker-N` staan (bewijs van unmount/mount).
+
+### Geleerd
+
+- Een **record in een record** wordt automatisch geneste JSON.
+- `InterruptedException` is een **checked exception**. Netjes afhandelen: `Thread.currentThread().interrupt()` (vlag herstellen) en daarna een exception gooien, niet alleen `printStackTrace()`.
+- **DRY:** dubbele code verplaatst naar de hulpmethode `currentThreadInfo()`.
+
+## Stap 5: Belastingstest, platform vs. virtual threads
+
+**Doel:** met cijfers aantonen dat virtual threads veel meer *wachtende* requests tegelijk aankunnen.
+
+**Test:** 200 requests, 100 tegelijk, elke request wacht 1 seconde.
+
+```bash
+hey -n 200 -c 100 "http://localhost:8080/api/thread/slow?ms=1000"
+```
+
+- **Meting A:** `spring.threads.virtual.enabled=false` + `server.tomcat.threads.max=10`
+- **Meting B:** `spring.threads.virtual.enabled=true` + `server.tomcat.threads.max=10` (bewust laten staan)
+
+### Resultaten
+
+|                 | A: Platform (max 10) | B: Virtual   | Verschil          |
+|-----------------|----------------------|--------------|-------------------|
+| Total           | 20,18 s              | **2,14 s**   | ~9,4× sneller     |
+| Requests/sec    | 9,9                  | **93,6**     | ~9,4× meer        |
+| Average latency | 7,83 s               | **1,07 s**   |                   |
+| Fastest         | 1,04 s               | 1,01 s       |                   |
+| Slowest         | 10,12 s              | **1,13 s**   |                   |
+| Size/request    | 252 bytes            | 343 bytes    | langere `toString()` van een virtual thread |
+
+### Histogrammen
+
+**A, platform threads:** trapjes van 10 (elke seconde komen er 10 klaar), en daarna **110 requests op ~10 s**.
+
+```
+  1.044 [1]     |
+  1.951 [9]     |■■■
+  2.858 [10]    |■■■■
+  ...           (elke seconde 10)
+  9.210 [10]    |■■■■
+ 10.117 [110]   |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+```
+
+**B, virtual threads:** twee blokken van ~100, geen wachtrij.
+
+```
+  1.011 [1]     |
+  1.022 [99]    |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+  ...
+  1.114 [12]    |■■■■■
+  1.126 [88]    |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+```
+
+### Uitleg
+
+**Meting A: thread starvation**
+- 10 threads en 200 requests van 1 s: 200 ÷ 10 = **20 rondes, dus ~20 s**. Maximaal 10 requests per seconde.
+- `hey -c 100` betekent 100 "gebruikers" die elk 2 requests sturen. De tweede request sluit **achteraan de wachtrij** aan, waar nog ~90 requests vóór staan. Daardoor duren bijna alle tweede requests ~10 s: dat zijn de 110 in het laatste blok.
+- **Wet van Little:** wachttijd ≈ requests in het systeem ÷ doorvoer = 100 ÷ 10 per s = **10 s**.
+- De server is niet traag (het werk is 1 s), maar requests **wachten op een vrije thread**. Dat heet *thread starvation*.
+
+**Meting B: geen wachtrij**
+- Alle 100 requests draaien **tegelijk**, elk op een eigen virtual thread. 200 ÷ 100 = **2 rondes, dus ~2 s**.
+- Elke request duurt ~1 s, en dat is precies de `sleep`. Niemand wacht op een thread.
+- Het tweede blok is ~0,1 s trager dan het eerste: een kleine overhead als 100 requests tegelijk binnenkomen (exacte oorzaak niet onderzocht).
+
+### Vragen en antwoorden
+
+1. **Klopte de voorspelling?**
+   Ja. A: 20 rondes, dus ~20 s. B: 2 rondes, dus ~2 s.
+
+2. **Waarom had `threads.max=10` geen effect bij B?**
+   `server.tomcat.threads.max` stelt de pool met **platform threads** van Tomcat in. Met virtual threads aan gebruikt Tomcat die pool niet: hij maakt voor **elke request een nieuwe virtual thread** (`tomcat-handler-N`). De limiet is nu het maximale aantal verbindingen (`server.tomcat.max-connections`, standaard 8192).
+
+3. **Waarom was Slowest bij A zo veel hoger dan Fastest?**
+   Door de **wachtrij**. Het werk kost voor iedereen 1 s, maar sommige requests stonden tot 9 s te wachten op een vrije thread. Bij B is er geen wachtrij, dus liggen Fastest en Slowest dicht bij elkaar.
+
+4. **Helpen virtual threads ook bij 1 seconde CPU-werk (geen sleep)?**
+   **Nee.** Virtual threads geven de carrier alleen vrij tijdens het **wachten** (I/O). CPU-werk houdt de carrier bezig, en er zijn maar 10 cores en dus 10 carriers. Dan krijg je ongeveer dezelfde ~20 s als bij A.
+
+### Conclusie
+
+> **Virtual threads maken code niet sneller. Ze maken wachten goedkoop.**
+> Bij I/O-zwaar werk (database, HTTP-calls) kan één server daardoor veel meer requests tegelijk aan, zonder grote thread pool. Bij CPU-zwaar werk helpen ze niet.
