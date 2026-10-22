@@ -192,3 +192,107 @@ Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- in ThreadControllerTest
 Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
 BUILD SUCCESS
 ```
+
+### Er draait altijd een thread
+
+Elke request heeft een thread nodig, anders kan er geen code uitgevoerd worden. De instelling `spring.threads.virtual.enabled` bepaalt alleen **welk soort**:
+
+| Instelling | Wie handelt de request af?            | Naam                |
+|------------|---------------------------------------|---------------------|
+| `true`     | Een **virtual thread**                | `tomcat-handler-N`  |
+| `false`    | Een **platform thread** uit Tomcat's pool | `http-nio-…-exec-N` |
+
+`http-nio-8080-exec-N` is de naam die Tomcat aan zijn gewone threads geeft: `http` = HTTP-connector, `nio` = het connectortype (Java "New I/O"), `8080` = de poort, `exec-N` = werker N uit de thread pool.
+
+Vóór Java 21 bestonden virtual threads niet, en draaide elke Spring-app op platform threads. Dat werkt prima, maar kan minder wachtende requests tegelijk aan (zie meting A in stap 5).
+
+### Wat betekent "test geslaagd"?
+
+Een test slaagt als **de verwachting klopt met wat er echt gebeurt**. Groen betekent dus niet "virtual threads werken", maar "wat ik verwachtte, kwam uit".
+
+| Test                                        | Verwachting                       | Werkelijkheid   | Resultaat |
+|---------------------------------------------|-----------------------------------|-----------------|-----------|
+| Tegenproef (`false`)                        | "Ik verwacht een platform thread" | Platform thread | ✅ groen  |
+| Test 1 (`true`)                             | "Ik verwacht een virtual thread"  | Virtual thread  | ✅ groen  |
+| Test 1, met `false` in `application.properties` | "Ik verwacht een virtual thread"  | Platform thread | ❌ rood   |
+
+De laatste regel heb ik bewust uitgeprobeerd, om te controleren dat de test echt kan falen:
+
+```
+[ERROR]   ThreadControllerTest.currentThreadRunsOnVirtualThread:29 Expecting value to be true but was false
+[ERROR]   ThreadControllerTest.slowThreadSleepsForRequestedTime:50 Expecting value to be true but was false
+[ERROR] Tests run: 4, Failures: 2, Errors: 0, Skipped: 0
+```
+
+De tegenproef blijft groen, omdat hij zelf `properties = "spring.threads.virtual.enabled=false"` in de testannotatie zet. Die waarde gaat vóór wat er in `application.properties` staat.
+
+De tegenproef is dus groen **omdat** hij een platform thread verwacht en die ook krijgt. Hij bewijst niet dat virtual threads draaien, maar juist dat ze **uit** staan als de instelling uit staat.
+
+### Samengevat
+
+- **Test 1** bewijst: instelling aan, dan virtual threads.
+- **Tegenproef** bewijst: instelling uit, dan platform threads (en de app werkt nog steeds).
+- **Samen** bewijzen ze dat **de instelling** het verschil maakt, en dat virtual threads niet vanzelf aanstaan.
+
+## Stap 7: Verdieping
+
+### 7.1 JEP 444: Virtual Threads (openjdk.org/jeps/444)
+
+**1. Sinds welke Java-versie zijn virtual threads definitief?**
+Sinds **Java 21** (september 2023). Daarvoor waren ze *preview* in Java 19 en 20.
+
+**2. Welk probleem met "thread-per-request" wilden ze oplossen?**
+- *Thread-per-request* (elke request krijgt een eigen thread) is de makkelijkste manier om servercode te schrijven: gewone, leesbare code van boven naar beneden, die makkelijk te debuggen is.
+- Maar platform threads zijn **duur** (één OS-thread per stuk), dus je kunt er maar een paar duizend hebben. Het **aantal threads** werd de grens voor hoeveel requests een server aankan, ook als de CPU niks staat te doen.
+- Ontwikkelaars weken daarom uit naar **asynchrone/reactieve** code (`CompletableFuture`, WebFlux). Die schaalt beter, maar is veel moeilijker te lezen, te debuggen en te profilen.
+- **Virtual threads geven allebei:** de eenvoud van thread-per-request én de schaalbaarheid van async code.
+- De JEP gebruikt zelf de **wet van Little** om dit uit te leggen, dezelfde formule als bij meting A in stap 5.
+
+**3. Wat zegt de JEP over de snelheid van code?**
+In de sectie *Description* staat:
+> *"Virtual threads are not faster threads — they do not run code any faster than platform threads. They exist to provide scale (higher throughput), not speed (lower latency)."*
+
+**Klopt dat met mijn meting?** Ja. In beide metingen duurde één request ~1 s, want de `sleep` werd niet sneller. Wat veranderde, was de **doorvoer**: 9,9 → 93,6 requests/sec, omdat er geen wachtrij meer was.
+
+### 7.2 Wanneer virtual threads NIET helpen
+
+**a) De connection pool als nieuwe flessenhals**
+
+Stel: 10.000 virtual threads willen tegelijk de database in, maar de pool (bijv. HikariCP) heeft 10 verbindingen.
+- Er kunnen er maar **10 tegelijk** een query doen. De andere 9.990 **wachten op een vrije verbinding**. Duurt dat te lang, dan krijgen ze een timeout-fout (bij HikariCP standaard na 30 s).
+- **Dat lijkt precies op meting A:** daar wachtten requests op een vrije *thread*, hier op een vrije *databaseverbinding*.
+- **De les:** virtual threads **verplaatsen de wachtrij, ze halen hem niet weg**. De flessenhals wordt de schaarste resource (databaseverbindingen, een externe API met rate limit). Je moet dus nog steeds nadenken over limieten en pool-groottes.
+
+**b) Virtual threads niet poolen**
+
+- **Waarom niet?** Een pool bestaat om dure dingen te hergebruiken. Virtual threads zijn **goedkoop**: maak er één per taak, en gooi hem daarna weg. Een pool voegt alleen complexiteit toe. Bovendien kan een hergebruikte thread oude `ThreadLocal`-data van een vorige taak meenemen. De JEP zegt letterlijk: *"Virtual threads should never be pooled."*
+- **Juiste manier:** `Executors.newVirtualThreadPerTaskExecutor()`, dus één nieuwe virtual thread per taak.
+- **Hoe beperk je hoeveel er tegelijk iets doen?** Met een **`Semaphore`**: een teller met een vast aantal "vergunningen".
+  - `semaphore.acquire()`: pak een vergunning, of wacht tot er een vrij is
+  - `semaphore.release()`: geef hem terug, altijd in een `finally`-blok
+  - Voorbeeld: `new Semaphore(10)` laat maximaal 10 virtual threads tegelijk de externe API aanroepen. De rest wacht, en dat is goedkoop, want het zijn virtual threads.
+  - Spring Framework 7 heeft hier ook een annotatie voor: **`@ConcurrencyLimit`** (komt terug bij het onderwerp resilience).
+
+**c) CPU-zwaar werk** (al gemeten in stap 5): virtual threads helpen niet. Er zijn maar 10 cores en dus 10 carriers.
+
+### 7.3 Nieuw in Java 25
+
+**Scoped Values (JEP 506), definitief in Java 25**
+
+- **Wat is het?** Een manier om een waarde (bijv. de ingelogde gebruiker of een request-ID) **beschikbaar te maken voor alle code die je aanroept**, zonder die als parameter door te geven. De waarde is **onveranderbaar** en geldt alleen **binnen een afgebakend blok**:
+  `ScopedValue.where(USER, "urfan").run(() -> ...)`. Buiten dat blok bestaat hij niet meer.
+- **Waarom beter dan `ThreadLocal`, zeker met miljoenen virtual threads?**
+  - `ThreadLocal` is **veranderbaar**: iedere methode kan hem overschrijven, en dat is lastig te volgen.
+  - `ThreadLocal` leeft **zo lang als de thread**. Vergeet je `remove()`, dan krijg je een geheugenlek, of lekt data naar een volgende taak.
+  - Elke thread heeft zijn **eigen kopie**. Bij miljoenen virtual threads zijn dat miljoenen kopieën, wat veel geheugen kost.
+  - Een Scoped Value is onveranderbaar, ruimt zichzelf op aan het einde van het blok, en kan **goedkoop gedeeld** worden met child-threads.
+
+**Structured Concurrency (JEP 505), preview in Java 25**
+
+- **Het probleem:** stel, één request haalt tegelijk een *gebruiker* en een *bestelling* op, in 2 parallelle taken via een `ExecutorService`. Als de gebruiker-taak **faalt**, loopt de bestelling-taak gewoon door: verspild werk. Als de request zelf wordt afgebroken, blijven beide taken soms doorlopen (**thread leaks**). En in een thread dump zie je niet welke taken bij elkaar horen.
+- **De oplossing:** met `StructuredTaskScope` behandel je parallelle subtaken als **één eenheid**, net als een gewoon blok code:
+  - je start subtaken met `fork()` en wacht op allemaal met `join()`
+  - faalt er één, dan worden de andere **automatisch geannuleerd**
+  - als het blok eindigt, zijn **gegarandeerd alle subtaken klaar**, dus geen lekken
+- Het past perfect bij virtual threads: elke subtaak krijgt goedkoop een eigen virtual thread.
+- Omdat het nog **preview** is, moet je `--enable-preview` gebruiken, en kan de API nog veranderen.
