@@ -3,7 +3,6 @@ package com.jrevolt.javaailab.thread;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import java.lang.management.ThreadInfo;
 
 @RestController
 @RequestMapping("/api/thread")
@@ -18,7 +17,8 @@ public class ThreadController {
                 thread.threadId(),
                 thread.getName(),
                 thread.isVirtual(),
-                thread.getState().name()
+                thread.getState().name(),
+                thread.toString()
         );
     }
 
@@ -26,7 +26,8 @@ public class ThreadController {
             long id,
             String name,
             boolean virtual,
-            String state
+            String state,
+            String description
     ) {
     }
 }
