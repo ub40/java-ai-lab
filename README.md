@@ -165,3 +165,30 @@ hey -n 200 -c 100 "http://localhost:8080/api/thread/slow?ms=1000"
 
 > **Virtual threads maken code niet sneller. Ze maken wachten goedkoop.**
 > Bij I/O-zwaar werk (database, HTTP-calls) kan één server daardoor veel meer requests tegelijk aan, zonder grote thread pool. Bij CPU-zwaar werk helpen ze niet.
+
+## Stap 6: Integratietests
+
+**Doel:** automatisch bewijzen dat de endpoints werken en dat virtual threads aanstaan.
+
+| Testklasse | Test | Controleert |
+|---|---|---|
+| `ThreadControllerTest` | `currentThreadRunsOnVirtualThread` | `/api/thread` draait op een virtual thread (`tomcat-handler-*`) |
+| `ThreadControllerTest` | `slowThreadSleepsForRequestedTime` | `/api/thread/slow?ms=100` geeft `ms=100` terug, `before`/`after` zijn virtual threads, en het duurt minstens 100 ms |
+| `ThreadControllerPlatformThreadTest` | `currentThreadRunsOnPlatformThreadWhenVirtualThreadsDisabled` | Tegenproef: met `spring.threads.virtual.enabled=false` draait het op een platform thread (`http-nio-*`) |
+
+**Waarom `@SpringBootTest(webEnvironment = RANDOM_PORT)` en geen MockMvc?**
+MockMvc roept de controller aan zonder echte server, op de thread van de test zelf. Dan is `virtual` altijd `false`. Met `RANDOM_PORT` start de echte Tomcat op een vrije poort, en `RestTestClient` stuurt echte HTTP-requests. Zo test je wat er in productie gebeurt.
+
+**Draaien:**
+
+```bash
+./mvnw verify
+```
+
+```
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- in JavaAiLabApplicationTests
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0 -- in ThreadControllerPlatformThreadTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- in ThreadControllerTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
