@@ -1,9 +1,9 @@
---Curl Out put--
+```Curl Out put
 
 1. {"id":83,"name":"tomcat-handler-9","virtual":true,"state":"RUNNABLE","description":"VirtualThread[#83,tomcat-handler-9]/runnable@ForkJoinPool-1-worker-5"}
---Curl Out put--
+```
 
---Vragen--
+```Vragen
 1. Wat is het verschil tussen een platform thread en een virtual thread, qua geheugen en wie ze beheert?
 
 Platform thread vs. virtual thread
@@ -32,9 +32,9 @@ Platform thread vs. virtual thread
 3. Hoeveel carriers zijn er standaard? sysctl -n hw.ncpu resultateert in 10.
    Evenveel als het aantal beschikbare CPU-cores (availableProcessors()). in mijn macbook 10 cores
 
---Vragen--
+```
 
---Experiement 3--
+```Experiement 3
 Kijk of je de extra worker threads kan starten met:
  -Djdk.virtualThreadScheduler.parallelism=2                                                                                                                                                              
 Zet dit in IntelliJ bij Run → Edit Configurations → VM options, herstart, en kijk of je alleen nog worker-1 en worker-2 ziet. Dat is meteen een leuk extra experiment voor je README.                   
@@ -67,6 +67,7 @@ curl "http://localhost:8080/api/thread/slow?ms=2000"
   "after": "VirtualThread[#69,tomcat-handler-0]/runnable@ForkJoinPool-1-worker-1",
   "ms": 2000
 }
+```
 ```
 
 ### Uitleg
