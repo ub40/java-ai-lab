@@ -9,8 +9,8 @@ import org.springframework.test.web.servlet.client.RestTestClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration tests: the real application starts on a random port and the tests send real
- * HTTP requests. {@code jsonPath} checks fields in the JSON response.
+ * Integratietests: de echte app start op een willekeurige poort en de tests sturen echte
+ * HTTP-requests. {@code jsonPath} controleert velden in het JSON-antwoord.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureRestTestClient

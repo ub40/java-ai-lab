@@ -2,112 +2,126 @@ package com.jrevolt.javaailab.analysis;
 
 import com.jrevolt.javaailab.project.ProjectInfo;
 import com.jrevolt.javaailab.project.ProjectService;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+
 /**
- * Asks a language model to assess the delivery risk of a project, and returns the answer as a
- * typed {@link ProjectAnalysis} record instead of free text.
+ * Laat een taalmodel het leveringsrisico van een project beoordelen, en geeft het antwoord
+ * terug als {@link ProjectAnalysis}-record in plaats van vrije tekst.
  *
- * <p><b>Technique: structured output.</b> A language model always produces text. To let
- * application code work with the answer (for example {@code analysis.risk() == Risk.HIGH}),
- * the model is asked to answer in JSON that matches a Java record, and the JSON is converted
- * into that record. Spring AI does both steps in {@code .entity(ProjectAnalysis.class)}.
+ * <p><b>Techniek: structured output.</b> Het model antwoordt in JSON volgens het schema van het
+ * record, en Spring AI zet die JSON om naar het record ({@code .entity(...)}).
  *
- * <p>Flow of one call:
- * <pre>
- *   analyze(1)
- *     -> ProjectService.getById(1)           (404 if the project does not exist)
- *     -> prompt: system + user text with the project data
- *     -> Spring AI adds JSON format instructions for ProjectAnalysis
- *     -> Ollama / llama3.2 answers with JSON
- *     -> Spring AI converts the JSON into a ProjectAnalysis record
- * </pre>
+ * <p>Verdedigingslagen tegen foute AI-output:
+ * <ol>
+ *   <li>native JSON-modus van Ollama: dwingt de vorm van het antwoord af</li>
+ *   <li>duidelijke prompt: kort antwoord, geen verzonnen feiten</li>
+ *   <li>Bean Validation op het record</li>
+ *   <li>één retry, daarna HTTP 502</li>
+ * </ol>
  *
- * <p>The model only knows what is in the prompt. It has no access to {@link ProjectService},
- * so the project data must be sent along explicitly.
- *
- * @see <a href="https://docs.spring.io/spring-ai/reference/api/chatclient.html">Spring AI reference: ChatClient API</a>
- * @see <a href="https://docs.spring.io/spring-ai/reference/api/structured-output-converter.html">Spring AI reference: Structured Output Converter</a>
+ * @see <a href="https://docs.spring.io/spring-ai/reference/api/chatclient.html">Spring AI: ChatClient API</a>
+ * @see <a href="https://docs.spring.io/spring-ai/reference/api/structured-output-converter.html">Spring AI: Structured Output Converter</a>
  */
 @Service
 public class ProjectAnalysisService {
 
+    private static final int MAX_ATTEMPTS = 2;
+    private static final Logger log = LoggerFactory.getLogger(ProjectAnalysisService.class);
+
     private final ChatClient chatClient;
     private final ProjectService projectService;
+    private final Validator validator;
 
     /**
-     * Constructor injection: Spring passes in both dependencies.
+     * Constructor-injectie. De {@link ChatClient.Builder} maakt Spring AI aan met de instellingen
+     * uit {@code application.properties} (URL, model, temperature).
      *
-     * <p>{@link ChatClient.Builder} is created by Spring AI's auto-configuration from
-     * {@code application.properties} ({@code spring.ai.ollama.base-url},
-     * {@code spring.ai.ollama.chat.model}, {@code spring.ai.ollama.chat.temperature}).
-     * No default system prompt is set here, because {@link #askModel(ProjectInfo)} sets its
-     * own system prompt per call.
-     *
-     * @param builder        pre-configured by Spring AI, used to create the {@link ChatClient}
-     * @param projectService provides the project data that is sent to the model
-     * @see <a href="https://docs.spring.io/spring-ai/reference/api/chatclient.html">ChatClient API: creating a ChatClient</a>
+     * @param builder        door Spring AI geconfigureerd, maakt de {@link ChatClient}
+     * @param projectService levert de projectgegevens voor de prompt
+     * @param validator      controleert de validatie-annotaties op {@link ProjectAnalysis}
      */
-    public ProjectAnalysisService(ChatClient.Builder builder, ProjectService projectService) {
+    public ProjectAnalysisService(ChatClient.Builder builder, ProjectService projectService, Validator validator) {
         this.chatClient = builder.build();
         this.projectService = projectService;
+        this.validator = validator;
     }
 
     /**
-     * Analyzes the project with the given id.
+     * Analyseert een project, met maximaal {@value #MAX_ATTEMPTS} pogingen.
      *
-     * <p>The project is looked up <em>before</em> the model is called. If it does not exist,
-     * {@link com.jrevolt.javaailab.project.ProjectNotFoundException} is thrown (HTTP 404) and
-     * no time is spent waiting for the model.
+     * <p>Het project wordt eerst opgehaald, zodat een onbekend id direct een 404 geeft zonder op
+     * het model te wachten. Per poging: onleesbare JSON wordt opgevangen, en een ongeldig record
+     * (bijv. {@code risk = null}) wordt door de {@link Validator} afgekeurd. AI-output wordt dus
+     * nooit blind vertrouwd.
      *
-     * @param projectId id of the project to analyze
-     * @return the model's assessment as a typed record
-     * @throws com.jrevolt.javaailab.project.ProjectNotFoundException if no project has this id
+     * @param projectId id van het project
+     * @return een geldige analyse
+     * @throws com.jrevolt.javaailab.project.ProjectNotFoundException als het project niet bestaat (404)
+     * @throws AiResponseException als het model na alle pogingen geen geldig antwoord gaf (502)
      */
     public ProjectAnalysis analyze(long projectId) {
         ProjectInfo project = projectService.getById(projectId);
-        return askModel(project);
+
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            ProjectAnalysis analysis;
+            try {
+                analysis = askModel(project);
+            } catch (RuntimeException e) {
+                log.warn("Attempt {}/{}: model returned unreadable output: {}", attempt, MAX_ATTEMPTS, e.getMessage());
+                continue;
+            }
+
+            if (analysis != null) {
+                Set<ConstraintViolation<ProjectAnalysis>> errors = validator.validate(analysis);
+                if (errors.isEmpty()) {
+                    return analysis;
+                }
+                log.warn("Attempt {}/{}: model returned invalid analysis {}: {}", attempt, MAX_ATTEMPTS, analysis, errors);
+            }
+        }
+
+        throw new AiResponseException("No valid analysis from the model for project " + projectId
+                + " after " + MAX_ATTEMPTS + " attempts");
     }
 
     /**
-     * Sends one prompt to the model and converts the answer into a {@link ProjectAnalysis}.
+     * Stuurt één prompt naar het model en zet het antwoord om naar een {@link ProjectAnalysis}.
      *
-     * <p>What each call in the chain does:
      * <ul>
-     *   <li>{@code prompt()}: starts a new request to the model.</li>
-     *   <li>{@code system(...)}: the <em>system prompt</em>, the role and rules for the model.</li>
-     *   <li>{@code user(u -> u.text(...).param(...))}: the <em>user prompt</em>, written as a
-     *       <b>prompt template</b>. The placeholders {@code {name}} and {@code {status}} are
-     *       replaced by the values passed to {@code param(...)}, so no strings are glued
-     *       together with {@code +}.</li>
-     *   <li>{@code call()}: sends the request and <em>waits</em> for the complete answer. On a
-     *       virtual thread this waiting is cheap.</li>
-     *   <li>{@code entity(ProjectAnalysis.class)}: instead of returning text (like
-     *       {@code content()}), Spring AI's {@code BeanOutputConverter} generates a JSON schema
-     *       from the record, appends "answer only in JSON matching this schema" to the prompt,
-     *       and converts the JSON answer into the record. For the enum {@link Risk} the schema
-     *       lists the only allowed values: {@code LOW}, {@code MEDIUM}, {@code HIGH}.</li>
+     *   <li>{@code options(...format(...))}: <b>native JSON-modus</b> van Ollama. Het schema van
+     *       het record gaat als {@code format} mee, zodat het model alleen JSON in die vorm kan
+     *       maken. Zonder dit schreef llama3.2 het schema over en kwam alles als {@code null} terug.</li>
+     *   <li>{@code system(...)}: de rol van het model.</li>
+     *   <li>{@code user(u -> u.text(...).param(...))}: prompt-template; {@code {name}} en
+     *       {@code {status}} worden ingevuld met de projectgegevens.</li>
+     *   <li>{@code call()}: verstuurt de vraag en wacht op het antwoord (goedkoop op een virtual thread).</li>
+     *   <li>{@code entity(...)}: zet de JSON om naar het record.</li>
      * </ul>
      *
-     * <p>The prompt text is a <b>text block</b> ({@code """ ... """}, Java 15): multi-line text
-     * without {@code \n} or {@code +}.
-     *
-     * <p><b>Note:</b> the model can still return invalid JSON or empty fields. That is handled
-     * by validation and a retry (step 3 of topic 4.4).
-     *
-     * @param project the project to analyze; its name and status are sent to the model
-     * @return the converted answer
-     * @see <a href="https://docs.spring.io/spring-ai/reference/api/chatclient.html">ChatClient API: prompt(), call(), content() and entity()</a>
-     * @see <a href="https://docs.spring.io/spring-ai/reference/api/structured-output-converter.html">Structured Output Converter: BeanOutputConverter and entity()</a>
+     * @param project het project; naam en status gaan mee in de prompt
+     * @return het omgezette antwoord, nog niet gevalideerd
      */
     private ProjectAnalysis askModel(ProjectInfo project) {
         return chatClient.prompt()
+                .options(OllamaChatOptions.builder()
+                        .format(new BeanOutputConverter<>(ProjectAnalysis.class).getJsonSchemaMap()))
                 .system("You are a software project risk analyst. Be concise.")
                 .user(u -> u.text("""
                         Analyze this software project and assess its delivery risk.
                         Name: {name}
                         Status: {status}
+
+                        Keep the summary to at most two short sentences.
+                        Only use the information given above; do not invent facts.
                         """)
                         .param("name", project.name())
                         .param("status", project.status().name()))

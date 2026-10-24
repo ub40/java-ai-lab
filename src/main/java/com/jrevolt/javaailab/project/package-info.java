@@ -1,23 +1,18 @@
 /**
- * Project domain: the data an AI assistant can ask about.
+ * Projectdomein: de gegevens waar een AI-assistent naar kan vragen.
  *
- * <p>Layering used in this package (the classic Spring setup):
+ * <p>Lagen (klassieke Spring-opzet):
  * <pre>
- *   ProjectController   (HTTP: URLs, parameters, status codes)
+ *   ProjectController   (HTTP)
  *          |
- *   AiActionService     (decides WHAT to do for an action)
+ *   AiActionService     (welke actie)
  *          |
- *   ProjectService      (business logic + data access)
+ *   ProjectService      (logica + data)
  *          |
- *   ProjectInfo         (immutable data, a record)
+ *   ProjectInfo         (onveranderbare data, record)
  * </pre>
  *
- * <p>Modern Java techniques shown here:
- * <ul>
- *   <li>{@link com.jrevolt.javaailab.project.ProjectInfo}: record with a compact constructor
- *       (validation) and a flexible constructor body (Java 25, JEP 513).</li>
- *   <li>{@link com.jrevolt.javaailab.project.ProjectService}: sequenced collections
- *       ({@code getLast()}, Java 21) and stream gatherers ({@code Gatherers.windowFixed}, Java 24).</li>
- * </ul>
+ * <p>Modern Java hier: record met compact constructor en flexible constructor body (Java 25),
+ * sequenced collections ({@code getLast()}, Java 21) en stream gatherers (Java 24).
  */
 package com.jrevolt.javaailab.project;

@@ -17,29 +17,22 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * REST API for projects.
+ * REST-API voor projecten.
  *
- * <p><b>Responsibility:</b> only HTTP. Each method translates a request into an
- * {@code AiAction} (or a direct service call) and returns the result; Spring turns the
- * returned record into JSON. There is no business logic here; that lives in
- * {@link AiActionService} and {@link ProjectService}.
+ * <p>Alleen HTTP: elke methode maakt een {@code AiAction} (of roept de service aan) en geeft
+ * het record terug als JSON. Doordat alles via {@link AiActionService#execute} loopt,
+ * gebruiken de API en een toekomstige AI-assistent (tool calling, MCP) dezelfde code.
  *
- * <p>Routing every request through {@link AiActionService#execute} means the HTTP API and a
- * future AI assistant (tool calling, MCP) use exactly the same code path.
- *
- * <p>Endpoints:
  * <ul>
- *   <li>{@code GET /api/projects}: all projects</li>
- *   <li>{@code GET /api/projects?status=IN_PROGRESS}: projects with that status</li>
- *   <li>{@code GET /api/projects/{id}}: one project, or 404</li>
- *   <li>{@code GET /api/projects/{id}/summary}: summary of one project</li>
- *   <li>{@code GET /api/projects/summaries}: summaries of all projects, in parallel</li>
- *   <li>{@code GET /api/projects/newest}: the most recently added project</li>
- *   <li>{@code GET /api/projects/batches?size=2}: projects in groups of {@code size}</li>
+ *   <li>{@code GET /api/projects[?status=...]}: alle projecten, of gefilterd op status</li>
+ *   <li>{@code GET /api/projects/{id}}: één project, of 404</li>
+ *   <li>{@code GET /api/projects/{id}/summary}: samenvatting van één project</li>
+ *   <li>{@code GET /api/projects/summaries}: alle samenvattingen, parallel</li>
+ *   <li>{@code GET /api/projects/newest}: het nieuwste project</li>
+ *   <li>{@code GET /api/projects/batches?size=2}: projecten in groepjes</li>
  * </ul>
  *
- * <p>Literal paths such as {@code /summaries} and {@code /newest} take precedence over the
- * pattern {@code /{id}}, so they do not clash.
+ * <p>Vaste paden als {@code /summaries} gaan vóór het patroon {@code /{id}}.
  */
 @RestController
 @RequestMapping("/api/projects")
@@ -49,10 +42,8 @@ public class ProjectController {
     private final ProjectService projectService;
 
     /**
-     * Constructor injection: Spring passes in both service beans.
-     *
-     * @param actionService  executes AI actions
-     * @param projectService direct access for endpoints that are not AI actions
+     * @param actionService  voert AI-acties uit
+     * @param projectService directe toegang voor endpoints die geen AI-actie zijn
      */
     public ProjectController(AiActionService actionService, ProjectService projectService) {
         this.actionService = actionService;
@@ -60,8 +51,8 @@ public class ProjectController {
     }
 
     /**
-     * @param status optional filter; when omitted, all projects are returned
-     * @return the matching projects as {@code {"projects": [...]}}
+     * @param status optioneel filter; zonder filter alle projecten
+     * @return {@code {"projects": [...]}}
      */
     @GetMapping
     public ActionResult search(@RequestParam(required = false) ProjectStatus status) {
@@ -69,8 +60,8 @@ public class ProjectController {
     }
 
     /**
-     * @param id the project id from the URL
-     * @return the project as {@code {"project": {...}}}, or HTTP 404 if it does not exist
+     * @param id project-id uit de URL
+     * @return {@code {"project": {...}}}, of 404
      */
     @GetMapping("/{id}")
     public ActionResult get(@PathVariable long id) {
@@ -78,10 +69,10 @@ public class ProjectController {
     }
 
     /**
-     * Takes about {@code 300 ms}, because it simulates a call to an AI model.
+     * Duurt ongeveer 300 ms, omdat een AI-call wordt nagebootst.
      *
-     * @param id the project id from the URL
-     * @return the summary, or HTTP 404 if the project does not exist
+     * @param id project-id uit de URL
+     * @return de samenvatting, of 404
      */
     @GetMapping("/{id}/summary")
     public ActionResult summary(@PathVariable long id) {
@@ -89,10 +80,9 @@ public class ProjectController {
     }
 
     /**
-     * Summarizes all projects in parallel on virtual threads. Compare {@code durationMs} in
-     * the response with 6 × 300 ms.
+     * Alle samenvattingen parallel op virtual threads; vergelijk {@code durationMs} met 6 × 300 ms.
      *
-     * @return all summaries plus the total duration
+     * @return alle samenvattingen plus de totale duur
      */
     @GetMapping("/summaries")
     public ActionResult summaries() {
@@ -100,7 +90,7 @@ public class ProjectController {
     }
 
     /**
-     * @return the most recently added project (uses {@code List.getLast()}, Java 21)
+     * @return het nieuwste project (via {@code List.getLast()}, Java 21)
      */
     @GetMapping("/newest")
     public ProjectInfo newest() {
@@ -108,16 +98,13 @@ public class ProjectController {
     }
 
     /**
-     * Groups the projects, using a stream gatherer (Java 24).
+     * Groepeert de projecten met een stream gatherer (Java 24).
      *
-     * <p><b>Technique: method validation.</b> {@link Min @Min} and {@link Max @Max} come from
-     * Jakarta Bean Validation (the {@code spring-boot-starter-validation} dependency). Since
-     * Spring Framework 6.1, Spring MVC validates such constraints on controller parameters
-     * automatically and answers HTTP <b>400 Bad Request</b> when they are violated, before
-     * this method is even called.
+     * <p><b>Techniek: method validation.</b> Spring MVC controleert {@link Min @Min} en
+     * {@link Max @Max} op parameters automatisch en geeft HTTP 400 bij een ongeldige waarde.
      *
-     * @param size projects per group, between 1 and 10 (default 2)
-     * @return a list of groups, for example {@code [[p1, p2], [p3, p4], [p5, p6]]}
+     * @param size projecten per groep, 1 t/m 10 (standaard 2)
+     * @return de groepjes, bijv. {@code [[p1, p2], [p3, p4], [p5, p6]]}
      */
     @GetMapping("/batches")
     public List<List<ProjectInfo>> batches(

@@ -5,53 +5,45 @@ import com.jrevolt.javaailab.project.ProjectInfo;
 import java.util.List;
 
 /**
- * The result of executing an {@link AiAction}.
+ * Het resultaat van een {@link AiAction}.
  *
- * <p><b>Technique: sealed interface with nested records.</b> Just like {@link AiAction},
- * this is a closed set of variants. Because all permitted records are declared
- * <em>inside</em> this interface (in the same source file), the compiler infers the
- * {@code permits} list automatically, so it can be left out.
- *
- * <p>Each action has its own, precisely typed result instead of a generic {@code Object} or
- * {@code Map}. Spring turns whichever record is returned into JSON, using that record's
- * components as the JSON fields.
+ * <p><b>Techniek: sealed interface met geneste records.</b> Omdat de records in hetzelfde
+ * bestand staan, leidt de compiler de {@code permits}-lijst zelf af. Elke actie krijgt een
+ * precies getypeerd resultaat in plaats van {@code Object} of {@code Map}.
  */
 public sealed interface ActionResult {
 
     /**
-     * Result of {@link SearchProjects}.
+     * Resultaat van {@link SearchProjects}.
      *
-     * @param projects the matching projects, possibly empty
+     * @param projects de gevonden projecten, mogelijk leeg
      */
     record ProjectsResult(List<ProjectInfo> projects) implements ActionResult {
     }
 
     /**
-     * Result of {@link GetProject}.
+     * Resultaat van {@link GetProject}.
      *
-     * @param project the requested project
+     * @param project het gevraagde project
      */
     record ProjectResult(ProjectInfo project) implements ActionResult {
     }
 
     /**
-     * Result of {@link GenerateSummary}.
+     * Resultaat van {@link GenerateSummary}.
      *
-     * @param projectId the summarized project
-     * @param summary   the generated text
-     * @param thread    the thread that produced the summary, so you can see it ran on a
-     *                  virtual thread
+     * @param projectId het samengevatte project
+     * @param summary   de tekst
+     * @param thread    de thread die het maakte, om de virtual thread te zien
      */
     record SummaryResult(long projectId, String summary, String thread) implements ActionResult {
     }
 
     /**
-     * Result of {@link GenerateAllSummaries}.
+     * Resultaat van {@link GenerateAllSummaries}.
      *
-     * @param summaries  one summary per project, in project order
-     * @param durationMs total wall-clock time. Because all summaries run in parallel on
-     *                   virtual threads, this is close to the time of <em>one</em>
-     *                   summary, not the sum of all of them
+     * @param summaries  één samenvatting per project
+     * @param durationMs totale duur; door parallel werken ongeveer de tijd van één samenvatting
      */
     record SummariesResult(List<SummaryResult> summaries, long durationMs) implements ActionResult {
     }

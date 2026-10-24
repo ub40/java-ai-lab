@@ -6,21 +6,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST endpoint for AI-generated project risk analyses.
+ * REST-endpoint voor AI-risicoanalyses: {@code GET /api/projects/{id}/analysis}.
  *
- * <p>Endpoint:
- * <ul>
- *   <li>{@code GET /api/projects/{id}/analysis}: the model's risk assessment of one project,
- *       for example {@code {"risk":"MEDIUM","summary":"...","recommendedAction":"..."}}.
- *       Returns HTTP 404 if the project does not exist. Takes a few seconds, because it waits
- *       for the language model.</li>
- * </ul>
- *
- * <p>This controller shares the base path {@code /api/projects} with
- * {@code ProjectController}. That is allowed in Spring MVC as long as the full paths differ.
- * Keeping it separate keeps the AI-dependent endpoint out of the plain project API.
- *
- * <p><b>Responsibility:</b> only HTTP. All logic lives in {@link ProjectAnalysisService}.
+ * <p>Geeft 404 als het project niet bestaat en 502 als het model geen geldig antwoord gaf.
+ * Duurt een paar seconden, omdat het op het model wacht. Alleen HTTP; de logica zit in
+ * {@link ProjectAnalysisService}.
  */
 @RestController
 @RequestMapping("/api/projects")
@@ -29,15 +19,15 @@ public class ProjectAnalysisController {
     private final ProjectAnalysisService analysisService;
 
     /**
-     * @param analysisService performs the analysis, injected by Spring
+     * @param analysisService voert de analyse uit
      */
     public ProjectAnalysisController(ProjectAnalysisService analysisService) {
         this.analysisService = analysisService;
     }
 
     /**
-     * @param id the project id from the URL
-     * @return the analysis as JSON; Spring converts the {@link ProjectAnalysis} record
+     * @param id project-id uit de URL
+     * @return de analyse als JSON
      */
     @GetMapping("/{id}/analysis")
     public ProjectAnalysis analysis(@PathVariable long id) {
