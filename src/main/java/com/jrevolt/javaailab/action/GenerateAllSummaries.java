@@ -1,16 +1,10 @@
 package com.jrevolt.javaailab.action;
 
 /**
- * Action: generate a summary for every project, in parallel on virtual threads.
+ * Actie: alle projecten samenvatten, parallel op virtual threads.
  *
- * <p>This record has no components, so it carries no data: the action itself is the whole
- * message. It is still useful as a record, because it takes part in the sealed
- * {@link AiAction} hierarchy and can be matched with the record pattern
- * {@code GenerateAllSummaries()}.
- *
- * <p><b>Try it:</b> remove this type from the {@code permits} list of {@link AiAction}, or
- * add a new action there, and see how the compiler immediately reports every {@code switch}
- * that is no longer complete.
+ * <p>Een record zonder velden: de actie zelf is de boodschap. Probeer een actie aan
+ * {@code permits} toe te voegen: de compiler wijst dan elke onvolledige {@code switch} aan.
  */
 public record GenerateAllSummaries() implements AiAction {
 }

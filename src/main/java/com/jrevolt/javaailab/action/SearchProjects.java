@@ -3,13 +3,11 @@ package com.jrevolt.javaailab.action;
 import com.jrevolt.javaailab.project.ProjectStatus;
 
 /**
- * Action: find projects, optionally filtered by status.
+ * Actie: projecten zoeken, optioneel gefilterd op status.
  *
- * <p>A record that implements a sealed interface must be {@code final}; records already are,
- * so nothing extra is needed. The record holds only the <em>input</em> of the action; the
- * behaviour lives in {@link AiActionService}.
+ * <p>Het record bevat alleen de invoer; het gedrag zit in {@link AiActionService}.
  *
- * @param status the status to filter on, or {@code null} to return all projects
+ * @param status de status om op te filteren, of {@code null} voor alle projecten
  */
 public record SearchProjects(
         ProjectStatus status

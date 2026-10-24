@@ -8,8 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Unit tests for {@link ProjectService}. The service is created with {@code new}, without
- * Spring, which is possible because it has no hidden dependencies.
+ * Unit-tests voor {@link ProjectService}, aangemaakt met {@code new}, zonder Spring.
  */
 class ProjectServiceTest {
 

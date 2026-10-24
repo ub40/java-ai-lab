@@ -1,9 +1,9 @@
 package com.jrevolt.javaailab.action;
 
 /**
- * Action: load a single project by its id.
+ * Actie: één project ophalen.
  *
- * @param projectId id of the project to load
+ * @param projectId id van het project
  */
 public record GetProject(
         long projectId

@@ -13,8 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Unit tests for {@link AiActionService}, using a real {@link ProjectService} (no mocks needed,
- * because the project service has no external dependencies).
+ * Unit-tests voor {@link AiActionService}, met een echte {@link ProjectService} (geen mocks
+ * nodig, want die heeft geen externe afhankelijkheden).
  */
 class AiActionServiceTest {
 

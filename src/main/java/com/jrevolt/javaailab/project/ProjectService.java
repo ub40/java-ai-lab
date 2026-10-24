@@ -7,28 +7,20 @@ import java.util.Optional;
 import java.util.stream.Gatherers;
 
 /**
- * Business logic and data access for projects.
+ * Logica en data-toegang voor projecten.
  *
- * <p><b>Why a service?</b> A controller should only deal with HTTP (URLs, parameters,
- * status codes). Everything else (finding, filtering, rules) lives in a service. This keeps
- * the logic reusable (a controller, a scheduled job or an AI tool can all call it) and
- * easy to unit test without starting a web server.
+ * <p>Een controller doet alleen HTTP; de logica zit hier, zodat controllers, AI-tools en
+ * tests dezelfde code gebruiken. {@link Service @Service} maakt hiervan één Spring-bean.
  *
- * <p>{@link Service @Service} makes this class a Spring bean: Spring creates exactly one
- * instance and injects it wherever it is needed (see the constructor of
- * {@code AiActionService}).
- *
- * <p>For this lab the data is an in-memory list instead of a real database. Because the list
- * is immutable ({@link List#of}) and {@link ProjectInfo} is a record, this class is
- * thread-safe without any locking.
+ * <p>De data is een lijst in het geheugen (nog geen database). Omdat de lijst onveranderbaar
+ * is en {@link ProjectInfo} een record is, is deze klasse thread-safe zonder locks.
  */
 @Service
 public class ProjectService {
 
     /**
-     * The "database". {@link List#of} returns an unmodifiable list: any attempt to add or
-     * remove an element throws an exception. The order is the order in which projects were
-     * added, so the last element is the newest project.
+     * De "database". {@link List#of} is onveranderbaar; de volgorde is de volgorde van toevoegen,
+     * dus het laatste element is het nieuwste project.
      */
     private final List<ProjectInfo> projects = List.of(
             new ProjectInfo(1, "Java AI Lab", ProjectStatus.IN_PROGRESS),
@@ -40,21 +32,18 @@ public class ProjectService {
     );
 
     /**
-     * @return all projects, in the order they were added
+     * @return alle projecten, in volgorde van toevoegen
      */
     public List<ProjectInfo> findAll() {
         return projects;
     }
 
     /**
-     * Looks up a project by id.
+     * Zoekt een project op id. {@link Optional} maakt "misschien geen resultaat" zichtbaar in de
+     * signatuur, in plaats van een onverwachte {@code null}.
      *
-     * <p><b>Why {@link Optional}?</b> It makes "maybe there is no result" visible in the
-     * method signature, so the caller is forced to think about the missing case instead of
-     * getting a surprise {@code null}.
-     *
-     * @param id the project id
-     * @return the project, or an empty {@code Optional} if it does not exist
+     * @param id het project-id
+     * @return het project, of een lege {@code Optional}
      */
     public Optional<ProjectInfo> findById(long id) {
         return projects.stream()
@@ -63,19 +52,19 @@ public class ProjectService {
     }
 
     /**
-     * Same as {@link #findById(long)}, but treats a missing project as an error.
+     * Zoals {@link #findById(long)}, maar een ontbrekend project is een fout.
      *
-     * @param id the project id
-     * @return the project
-     * @throws ProjectNotFoundException if no project has this id (becomes HTTP 404)
+     * @param id het project-id
+     * @return het project
+     * @throws ProjectNotFoundException als het project niet bestaat (HTTP 404)
      */
     public ProjectInfo getById(long id) {
         return findById(id).orElseThrow(() -> new ProjectNotFoundException(id));
     }
 
     /**
-     * @param status the status to filter on
-     * @return all projects with that status, possibly an empty list
+     * @param status de status om op te filteren
+     * @return alle projecten met die status, mogelijk leeg
      */
     public List<ProjectInfo> findByStatus(ProjectStatus status) {
         return projects.stream()
@@ -84,33 +73,25 @@ public class ProjectService {
     }
 
     /**
-     * Returns the most recently added project.
+     * <b>Techniek: sequenced collections (Java 21, JEP 431).</b> {@code getLast()} in plaats van
+     * {@code list.get(list.size() - 1)}; werkt op elke geordende collectie.
      *
-     * <p><b>Technique: sequenced collections (Java 21, JEP 431).</b> Before Java 21 you had to
-     * write {@code list.get(list.size() - 1)} to get the last element, and every collection
-     * type had its own way to do it. Java 21 added the {@code SequencedCollection} interface
-     * with {@code getFirst()}, {@code getLast()} and {@code reversed()} for every collection
-     * that has a defined order ({@code List}, {@code Deque}, {@code LinkedHashSet}, ...).
-     *
-     * @return the last project in the list
+     * @return het laatst toegevoegde project
      */
     public ProjectInfo newest() {
         return projects.getLast();
     }
 
     /**
-     * Splits all projects into groups ("pages") of a fixed size.
+     * Verdeelt de projecten in groepjes van vaste grootte.
      *
-     * <p><b>Technique: stream gatherers (Java 24, JEP 485).</b> Streams always had built-in
-     * intermediate steps such as {@code filter} and {@code map}, but you could not write your
-     * own. {@code Stream.gather(...)} adds that extension point. {@link Gatherers} ships
-     * ready-made ones; {@link Gatherers#windowFixed(int)} collects consecutive elements into
-     * lists of {@code size} elements. With 6 projects and size 4 the result is
-     * {@code [[1, 2, 3, 4], [5, 6]]}: the last group may be smaller.
+     * <p><b>Techniek: stream gatherers (Java 24, JEP 485).</b> Met {@code gather(...)} kun je
+     * eigen tussenstappen in een stream gebruiken. {@link Gatherers#windowFixed(int)} maakt
+     * groepjes: 6 projecten met grootte 4 geeft {@code [[1, 2, 3, 4], [5, 6]]}.
      *
-     * @param size number of projects per group, must be at least 1
-     * @return the projects grouped in lists of at most {@code size} elements
-     * @throws IllegalArgumentException if {@code size} is smaller than 1
+     * @param size projecten per groep, minstens 1
+     * @return de groepjes; de laatste kan kleiner zijn
+     * @throws IllegalArgumentException als {@code size} kleiner dan 1 is
      */
     public List<List<ProjectInfo>> inBatches(int size) {
         return projects.stream()

@@ -17,22 +17,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /**
- * Executes {@link AiAction}s: the single entry point through which an AI assistant (or a
- * controller) asks the application to do something.
+ * Voert {@link AiAction}s uit: het ene toegangspunt waarlangs een controller of AI-assistent
+ * de applicatie iets laat doen.
  *
- * <p><b>Technique: constructor injection.</b> The {@link ProjectService} dependency is a
- * constructor parameter and stored in a {@code final} field. Spring sees the single
- * constructor and passes in the bean automatically; no {@code @Autowired} is needed. This is
- * the recommended style: the dependency can never be {@code null} or change, and in a unit
- * test you simply call {@code new AiActionService(new ProjectService())}.
+ * <p><b>Techniek: constructor-injectie.</b> Spring geeft {@link ProjectService} mee via de
+ * constructor, zonder {@code @Autowired}. In een unit-test: {@code new AiActionService(new ProjectService())}.
  */
 @Service
 public class AiActionService {
 
     /**
-     * How long a simulated AI call takes. A real language model often needs hundreds of
-     * milliseconds or more to answer, during which the thread is only <em>waiting</em>. That
-     * is exactly the situation where virtual threads shine.
+     * Duur van een nagebootste AI-call. Tijdens het wachten doet de thread niets: precies waar
+     * virtual threads voor bedoeld zijn.
      */
     static final Duration SIMULATED_AI_LATENCY = Duration.ofMillis(300);
 
@@ -41,34 +37,27 @@ public class AiActionService {
     private final ProjectService projectService;
 
     /**
-     * @param projectService provides the project data, injected by Spring
+     * @param projectService levert de projectgegevens
      */
     public AiActionService(ProjectService projectService) {
         this.projectService = projectService;
     }
 
     /**
-     * Executes an action and returns its result.
+     * Voert een actie uit.
      *
-     * <p><b>Technique: pattern matching for {@code switch} (Java 21, JEP 441).</b> The
-     * {@code switch} checks the <em>type</em> of {@code action} and picks the matching branch.
-     * Because {@link AiAction} is sealed, the compiler knows every possible type, so the
-     * switch is <em>exhaustive</em>: no {@code default} branch is needed, and a newly added
-     * action that is not handled here is a compile error.
+     * <ul>
+     *   <li><b>Pattern matching voor {@code switch} (Java 21, JEP 441):</b> kiest de tak op type.
+     *       Omdat {@link AiAction} sealed is, is geen {@code default} nodig.</li>
+     *   <li><b>Record patterns (Java 21, JEP 440):</b> {@code case GetProject(long id)} controleert
+     *       het type én haalt het veld eruit.</li>
+     *   <li><b>Guard met {@code when}:</b> de eerste {@code SearchProjects}-tak geldt alleen als
+     *       {@code status == null}; de specifiekere tak moet bovenaan.</li>
+     * </ul>
      *
-     * <p><b>Technique: record patterns (Java 21, JEP 440).</b> {@code case GetProject(long id)}
-     * does two things at once: it checks that the action is a {@code GetProject} <em>and</em>
-     * unpacks its component into the variable {@code id}. Compare with the older style
-     * {@code case GetProject get -> get.projectId()}.
-     *
-     * <p><b>Technique: guarded patterns with {@code when}.</b> The first {@code SearchProjects}
-     * branch only matches when the extra condition is true. Branches are tried from top to
-     * bottom, so the more specific (guarded) branch must come first.
-     *
-     * @param action the action to execute
-     * @return the typed result of that action
-     * @throws com.jrevolt.javaailab.project.ProjectNotFoundException if the action refers to a
-     *                                                                project that does not exist
+     * @param action de actie
+     * @return het getypeerde resultaat
+     * @throws com.jrevolt.javaailab.project.ProjectNotFoundException als het project niet bestaat
      */
     public ActionResult execute(AiAction action) {
         log.info("Executing AI action '{}': {}", describe(action), action);
@@ -88,15 +77,13 @@ public class AiActionService {
     }
 
     /**
-     * Returns a short, stable name for an action, for example for logging or as a tool name.
+     * Korte, vaste naam van een actie, bijv. voor logging of als tool-naam.
      *
-     * <p><b>Technique: unnamed patterns {@code _} (Java 22, JEP 456).</b> Here only the
-     * <em>type</em> of the action matters, not its data. Writing {@code SearchProjects(_)}
-     * says "a SearchProjects, whatever is inside" without inventing a variable name that is
-     * never used. This makes the intent clear and avoids "unused variable" warnings.
+     * <p><b>Techniek: unnamed patterns {@code _} (Java 22, JEP 456).</b> Alleen het type telt;
+     * {@code SearchProjects(_)} betekent "wat er ook in zit", zonder ongebruikte variabele.
      *
-     * @param action the action to describe
-     * @return a kebab-case name such as {@code "get-project"}
+     * @param action de actie
+     * @return een naam als {@code "get-project"}
      */
     static String describe(AiAction action) {
         return switch (action) {
@@ -108,14 +95,13 @@ public class AiActionService {
     }
 
     /**
-     * Generates the summary for one project, simulating a slow AI call.
+     * Maakt de samenvatting van één project, met een nagebootste trage AI-call.
      *
-     * <p>The {@code switch} over {@link ProjectStatus} is an exhaustive switch
-     * <em>expression</em>: it returns a value, uses {@code ->} (no fall-through, no
-     * {@code break}) and covers all enum constants, so no {@code default} is needed.
+     * <p>De {@code switch} over {@link ProjectStatus} is een exhaustive switch-expressie: geeft
+     * een waarde terug, zonder {@code break} en zonder {@code default}.
      *
-     * @param project the project to summarize
-     * @return the summary, including the name of the thread that produced it
+     * @param project het project
+     * @return de samenvatting, met de naam van de thread
      */
     private SummaryResult summarize(ProjectInfo project) {
         simulateAiCall();
@@ -134,24 +120,18 @@ public class AiActionService {
     }
 
     /**
-     * Generates summaries for all projects in parallel, one virtual thread per project.
+     * Vat alle projecten parallel samen, één virtual thread per project.
      *
-     * <p><b>Technique: virtual-thread-per-task executor (Java 21, JEP 444).</b>
-     * {@link Executors#newVirtualThreadPerTaskExecutor()} starts a <em>new</em> virtual
-     * thread for every submitted task. There is no pool: virtual threads are so cheap that
-     * pooling them is an anti-pattern.
+     * <ul>
+     *   <li>{@link Executors#newVirtualThreadPerTaskExecutor()} (Java 21): een nieuwe virtual
+     *       thread per taak, zonder pool.</li>
+     *   <li>try-with-resources op de executor: {@code close()} wacht tot alle taken klaar zijn,
+     *       daarna leest {@link Future#resultNow()} het resultaat zonder te blokkeren.</li>
+     * </ul>
      *
-     * <p><b>Technique: try-with-resources on an {@code ExecutorService} (Java 19+).</b>
-     * {@code ExecutorService} is {@link AutoCloseable}. Closing it at the end of the
-     * {@code try} block <em>waits until all tasks have finished</em>. After the block, every
-     * {@link Future} is guaranteed to be done, so {@link Future#resultNow()} can read the
-     * result without blocking or a checked exception.
+     * <p>6 × 300 ms na elkaar is ~1,8 s; parallel ~300 ms.
      *
-     * <p>With 6 projects of 300 ms each, doing them one after another would take about
-     * 1.8 seconds. In parallel it takes about 300 ms: the same "waiting is cheap" effect that
-     * was measured with {@code hey} in topic 1.
-     *
-     * @return all summaries plus the total duration
+     * @return alle samenvattingen plus de totale duur
      */
     private SummariesResult summarizeAll() {
         List<ProjectInfo> projects = projectService.findAll();
@@ -173,13 +153,10 @@ public class AiActionService {
     }
 
     /**
-     * Simulates waiting for a language model.
+     * Bootst het wachten op een taalmodel na. Op een virtual thread stapt de thread tijdens
+     * {@code sleep} af van zijn carrier (unmount).
      *
-     * <p>On a virtual thread, {@code sleep} <em>unmounts</em> the virtual thread from its
-     * carrier, so the carrier can run other work in the meantime.
-     *
-     * @throws IllegalStateException if the thread is interrupted while waiting; the interrupt
-     *                               flag is restored first so callers can still see it
+     * @throws IllegalStateException bij een interrupt; de interrupt-vlag wordt eerst hersteld
      */
     private static void simulateAiCall() {
         try {

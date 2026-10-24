@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Unit tests for {@link ProjectInfo}: no Spring, just plain Java, so they run in milliseconds.
+ * Unit-tests voor {@link ProjectInfo}: zonder Spring, dus in milliseconden klaar.
  */
 class ProjectInfoTest {
 
