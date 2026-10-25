@@ -8,6 +8,8 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.jrevolt.javaailab.action.SearchProjects;
+import com.jrevolt.javaailab.project.ProjectStatus;
 
 /**
  * Tools die het taalmodel mag aanroepen.
@@ -31,5 +33,18 @@ public class ProjectTools {
     public ActionResult getProject(@ToolParam(description = "The project id, for example 1") long projectId) {
         log.info("Model called tool getProject(projectId={})", projectId);
         return actionService.execute(new GetProject(projectId));
+    }
+
+    @Tool(description = "Find software projects that have a specific status.")
+    public ActionResult searchProjects(
+            @ToolParam(description = "The status to filter on") ProjectStatus status) {
+        log.info("Model called tool searchProjects(status={})", status);
+        return actionService.execute(new SearchProjects(status));
+    }
+
+    @Tool(description = "List all software projects, with their id, name and status.")
+    public ActionResult listAllProjects() {
+        log.info("Model called tool listAllProjects()");
+        return actionService.execute(new SearchProjects(null));
     }
 }
