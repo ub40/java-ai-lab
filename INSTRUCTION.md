@@ -345,15 +345,96 @@ Bij elke `mcp_call` staat in de console van de applicatie een regel als `Model c
 
 **Verschil met de assistent (6.3):** hier zit **geen taalmodel** tussen. Jij kiest de tool en de argumenten. Bij de assistent (of bij Claude Code als MCP-client) beslist het model welke tool het aanroept.
 
-### 7.3 Andere MCP-clients (optioneel)
+### 7.3 MCP Inspector (optioneel)
 
-**MCP Inspector** (een webpagina, Node.js nodig):
+Een webpagina om de tools aan te klikken (Node.js nodig):
 
 ```bash
 npx @modelcontextprotocol/inspector
 ```
 
 Kies *Transport Type*: **Streamable HTTP**, *URL*: `http://localhost:8080/mcp`, en klik op **Connect**. Tabblad **Tools** → **List Tools** → kies een tool → **Run Tool**.
+
+### 7.4 Een AI-client koppelen: Claude Code of Codex
+
+Bij 7.2 was **jij** de client en koos jij de tool. Nu kiest een **AI-model** zelf welke tool het gebruikt, via hetzelfde protocol.
+
+```
+Claude Code (Claude)  ─┐
+                       ├── MCP over HTTP ──▶ localhost:8080/mcp ──▶ ProjectTools ──▶ AiActionService
+Codex (OpenAI-model)  ─┘
+```
+
+**Er is geen extra code nodig.** Claude Code en Codex sturen dezelfde berichten als `mcp_init`, `mcp_tools` en `mcp_call` (`initialize`, `tools/list`, `tools/call`). Je vertelt de client alleen waar de server staat.
+
+**Voorbereiding (voor beide clients):**
+
+1. De applicatie draait, met `Registered tools: 4` in de console.
+2. Snelle check: `mcp_init && mcp_tools` toont de 4 tools.
+
+> 🔒 **Privacy:** de vragen en de **tool-resultaten** (de projectgegevens) gaan naar de servers van de aanbieder: **Anthropic** bij Claude Code, **OpenAI** bij Codex. Gebruik dit niet met vertrouwelijke data.
+
+#### Claude Code
+
+| Stap | Commando | Verwacht |
+|---|---|---|
+| 1. Server toevoegen (in de projectmap) | `claude mcp add --transport http java-ai-lab http://localhost:8080/mcp` | De server is toegevoegd |
+| 2. Controleren | `claude mcp list` | `java-ai-lab: http://localhost:8080/mcp (HTTP) - ✔ Connected` |
+| 3. Nieuwe sessie starten (in een **nieuw** terminalvenster, in de projectmap) | `claude` | Claude Code start |
+| 4. Tools bekijken (in Claude Code) | `/mcp` | `java-ai-lab` met 4 tools |
+| 5. Verwijderen (als je klaar bent) | `claude mcp remove java-ai-lab` | De server is weg |
+
+- `--transport http` betekent *Streamable HTTP*, hetzelfde als `spring.ai.mcp.server.protocol=STREAMABLE`.
+- Standaard is de scope `local`: de server geldt alleen voor jou, in deze projectmap. Er komt niets in de Git-repo.
+- Een Claude Code-sessie die **vóór** het toevoegen gestart is, ziet de server niet. Start altijd een nieuwe sessie.
+- In Claude Code heten de tools `mcp__java-ai-lab__<toolnaam>`, bijv. `mcp__java-ai-lab__searchProjects`.
+
+#### Codex
+
+| Stap | Commando | Verwacht |
+|---|---|---|
+| 1. Server toevoegen | `codex mcp add java-ai-lab --url http://localhost:8080/mcp` | De server is toegevoegd |
+| 2. Controleren | `codex mcp list` | `java-ai-lab` met de URL `http://localhost:8080/mcp` |
+| 3. Codex starten (in een **nieuw** terminalvenster, in de projectmap) | `codex` | Codex start |
+| 4. Tools bekijken (in Codex) | `/mcp` | `java-ai-lab` met de tools |
+| 5. Verwijderen (als je klaar bent) | `codex mcp remove java-ai-lab` | De server is weg |
+
+- `--url` betekent een *Streamable HTTP*-server.
+- Codex slaat dit op in `~/.codex/config.toml`. Het geldt dus voor al je projecten, niet alleen voor deze map.
+
+#### Vragen stellen
+
+Stel in Claude Code of Codex bijvoorbeeld:
+
+```
+Which of my projects are in progress? Use the java-ai-lab MCP tools.
+```
+
+Wat er gebeurt:
+
+1. Het model kiest zelf een tool, bijv. `searchProjects` met `IN_PROGRESS`.
+2. De client **vraagt om toestemming** om de tool te gebruiken (*human-in-the-loop*). Kies *Yes*.
+3. In de console van de Java-applicatie verschijnt `Model called tool searchProjects(status=IN_PROGRESS)`.
+4. Het antwoord noemt project 1 (*Java AI Lab*) en 5 (*Resilience Patterns*).
+
+**Testvragen**, en de tool die je mag verwachten:
+
+| Vraag | Verwachte tool-call | Juist antwoord |
+|---|---|---|
+| *Which projects are in progress?* | `searchProjects(status=IN_PROGRESS)` | project 1 en 5 |
+| *Which projects are planned?* | `searchProjects(status=PLANNED)` | project 3, 4 en 6 |
+| *How many projects are there in total?* | `listAllProjects()` | 6 |
+| *Tell me about project 1 and project 5* | 2× `getProject` | *Java AI Lab* en *Resilience Patterns*, allebei in progress |
+| *What is the status of project 999?* | `getProject(projectId=999)` | het project bestaat niet |
+| *Delete project 4* | `requestProjectDeletion(projectId=4)` | er is goedkeuring van een mens nodig; **niets verwijderd** |
+
+Controleer de tool-calls altijd in de console van de Java-applicatie: daar zie je wat er **echt** werd uitgevoerd, los van wat het model zegt. Na alle vragen zijn er nog steeds 6 projecten:
+
+```bash
+curl -s http://localhost:8080/api/projects | jq '.projects | length'
+```
+
+**Vergelijk de clients:** stel dezelfde vragen ook aan de eigen assistent (`ask_assistant`, met het kleine lokale llama3.2-model, zie 6.3). Kiezen de grotere modellen van Claude en Codex vaker de juiste tool?
 
 ---
 
@@ -384,6 +465,8 @@ De tests hebben **geen** Ollama nodig: ze testen virtual threads, de projecten e
 | `initialize: command not found` | MCP-berichtnaam als terminal-commando getypt | Gebruik `mcp_init`, `mcp_tools` en `mcp_call` uit stap 7.1 |
 | **404** op `/mcp` | App nog niet herstart na het toevoegen van MCP, of het protocol staat niet op `STREAMABLE` | App herstarten; controleer `spring.ai.mcp.server.protocol=STREAMABLE` |
 | `mcp_tools` of `mcp_call` geeft niets terug | Geen (geldige) sessie, bijv. na een herstart van de app | Eerst opnieuw `mcp_init` |
+| `claude mcp list` toont `✘ Failed to connect` | De applicatie draait niet, of `/mcp` geeft een 404 | Applicatie (her)starten; controleer met `mcp_init` |
+| `java-ai-lab` ontbreekt bij `/mcp` in Claude Code of Codex | De sessie is gestart vóór het toevoegen van de server | Sluit de sessie en start een nieuwe |
 
 ---
 
@@ -391,3 +474,4 @@ De tests hebben **geen** Ollama nodig: ze testen virtual threads, de projecten e
 
 - **Applicatie:** `Ctrl+C` in de terminal, of de rode ■ in IntelliJ.
 - **Ollama:** `Ctrl+C` in het venster van `ollama serve`, of `brew services stop ollama`.
+- **MCP-koppeling verwijderen:** `claude mcp remove java-ai-lab` en/of `codex mcp remove java-ai-lab`.
