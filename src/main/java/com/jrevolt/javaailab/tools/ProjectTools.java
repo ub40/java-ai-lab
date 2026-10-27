@@ -47,4 +47,11 @@ public class ProjectTools {
         log.info("Model called tool listAllProjects()");
         return actionService.execute(new SearchProjects(null));
     }
+
+    @Tool(description = "Request deletion of a software project. The project is NOT deleted: a human must approve the request first.")
+    public String requestProjectDeletion(@ToolParam(description = "The id of the project to delete") long projectId) {
+        log.warn("Model requested deletion of project {}: NOT executed, human approval required", projectId);
+        return "Deletion of project " + projectId + " was NOT executed. A human must approve this request first.";
+    }
+
 }
