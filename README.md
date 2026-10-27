@@ -1,3 +1,77 @@
+# Java AI Lab
+
+Leerproject met **Java 25**, **Spring Boot 4.1** en **Spring AI 2.0**, gebouwd als voorbereiding op [SoJava 2026](https://www.sogeti.nl) (28 oktober 2026, Groningen).
+
+Het project laat stap voor stap zien hoe je moderne Java combineert met AI: van virtual threads tot een lokaal taalmodel, structured output, tool calling en een MCP-server die door Claude Code en Codex gebruikt wordt. Alles op één gedeelde service-laag.
+
+## Wat het kan
+
+| Onderdeel | Endpoint | Wat het laat zien |
+|---|---|---|
+| **Virtual threads** | `/api/thread`, `/api/thread/slow` | Gemeten: **~9× meer doorvoer** bij wachtende requests (20 s → 2 s) |
+| **Modern Java 21–25** | `/api/projects/**` | Records, sealed interfaces, pattern matching, record patterns, stream gatherers, flexible constructor bodies |
+| **Lokaal taalmodel** | `/api/chat` | Spring AI + **Ollama** (llama3.2): de data blijft op de eigen machine |
+| **Structured output** | `/api/projects/{id}/analysis` | Het model antwoordt als Java-record; **gevalideerd**, met retry en Ollama's native JSON-modus |
+| **Tool calling** | `/api/assistant` | Het model roept zelf Java-methodes aan om echte data op te halen |
+| **Security** | tool `requestProjectDeletion` | Het model kan een verwijdering alleen **aanvragen**: de code beslist, niet de prompt |
+| **MCP-server** | `/mcp` | Dezelfde tools via het *Model Context Protocol*; getest met **Claude Code** en **Codex** |
+
+## Architectuur
+
+```
+            REST-API             Eigen assistent            MCP-clients
+         (/api/projects)     (/api/assistant + Ollama)   (Claude Code, Codex)
+                │                       │                        │
+                │                  tool calling              MCP (/mcp)
+                │                       └──────────┬─────────────┘
+                │                             ProjectTools
+                └──────────────────┬───────────────┘
+                            AiActionService      ← sealed AiAction + pattern matching
+                                   │
+                            ProjectService       ← records, Optional, gatherers
+```
+
+Eén service-laag, drie ingangen: de REST-API, tool calling voor de eigen lokale assistent, en MCP voor externe AI-clients.
+
+## Tech stack
+
+Java 25 · Spring Boot 4.1 · Spring AI 2.0 · Ollama (llama3.2) · Model Context Protocol · Maven · JUnit 5 · AssertJ
+
+## Zelf draaien
+
+```bash
+ollama serve                              # lokaal taalmodel starten (eigen terminal)
+ollama pull llama3.2                      # model downloaden (eenmalig)
+./mvnw spring-boot:run                    # applicatie op http://localhost:8080
+./mvnw verify                             # tests (Ollama niet nodig)
+```
+
+De volledige handleiding, met alle endpoints, verwachte resultaten, MCP-commando's en het koppelen van Claude Code en Codex, staat in **[INSTRUCTION.md](INSTRUCTION.md)**.
+
+## Meer informatie
+
+| Bestand | Inhoud |
+|---|---|
+| **[INSTRUCTION.md](INSTRUCTION.md)** | Stap voor stap: Ollama en de app starten, alle endpoints met verwachte resultaten, MCP vanuit de terminal, Claude Code en Codex koppelen |
+| **[BEVINDINGEN.md](BEVINDINGEN.md)** | Wat ik gemeten en geleerd heb: hallucinaties, structured output die stilletjes faalde, tool-ontwerp, tool calling vs. MCP, llama3.2 vs. Claude Code vs. Codex, en privacy bij AI-codeerassistenten |
+
+## Belangrijkste lessen
+
+Uitgebreid, met tabellen en logs: [BEVINDINGEN.md](BEVINDINGEN.md).
+
+| Les | Waar gezien |
+|---|---|
+| Virtual threads maken **wachten goedkoop**, niet code sneller | Belastingstest: 20 s → 2 s, maar elke request bleef 1 s |
+| **Vertrouw AI-output nooit blind** | Het model gaf stilletjes een record met alleen `null`; nu gevalideerd met retry en een duidelijke 502 |
+| **Vorm en inhoud zijn twee problemen** | Native JSON-modus loste de vorm op; de prompt en validatie bewaken de inhoud |
+| **Tool-ontwerp is prompt engineering** | Een optionele parameter werd door het model met `""` gevuld; opgelost met twee kleine tools |
+| **Beveilig in de server, niet in de prompt of de client** | Prompt injection en clients zonder toestemmingsvraag konden niets verwijderen |
+| **Lokaal vs. cloud is een afweging** | llama3.2 houdt data lokaal maar maakt meer fouten; Claude en Codex zijn slimmer, maar de data gaat naar de aanbieder |
+
+---
+
+## Leernotities: onderwerp 1 (virtual threads)
+
 ```Curl Out put
 
 1. {"id":83,"name":"tomcat-handler-9","virtual":true,"state":"RUNNABLE","description":"VirtualThread[#83,tomcat-handler-9]/runnable@ForkJoinPool-1-worker-5"}
